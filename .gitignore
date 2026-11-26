@@ -1,0 +1,10 @@
+# datos personales: no subir
+cv/*
+!cv/.gitkeep
+resultados/
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.tmp

@@ -1,0 +1,65 @@
+name: Recolector de ofertas
+
+on:
+  schedule:
+    # Cada 10 min de 6:00 a 21:59 hora Costa Rica (UTC-6 → 12:00–03:59 UTC)
+    - cron: "*/10 0-3,12-23 * * *"
+  workflow_dispatch:
+    inputs:
+      empleo_max_pages:
+        description: "Páginas de empleo.cr (0 = todas; úsalo en la primera corrida)"
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recolector
+  cancel-in-progress: false
+
+jobs:
+  recolectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependencias
+        run: pip install -r requirements.txt
+
+      - name: Cache de Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Instalar Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Recolectar (CR + LATAM + empleo.cr)
+        id: recolectar
+        env:
+          EMPLEO_MAX_PAGES: ${{ github.event.inputs.empleo_max_pages || '3' }}
+          TELEGRAM_PAGES: "2"
+        run: python recolector.py
+
+      - name: Commit automático
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/jobs.json
+          if git diff --cached --quiet; then
+            echo "Sin ofertas nuevas"
+            exit 0
+          fi
+          git commit -m "ofertas: ${{ steps.recolectar.outputs.new_count }} nuevas"
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 5
+          done
+          exit 1
