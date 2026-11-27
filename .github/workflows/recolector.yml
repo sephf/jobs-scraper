@@ -20,8 +20,15 @@ jobs:
   recolectar:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EMPLEO_MAX_PAGES: ${{ github.event.inputs.empleo_max_pages || '3' }}
+      TELEGRAM_PAGES: "2"
+      BRANCH: ${{ github.event.repository.default_branch }}
     steps:
+      # siempre la última versión de main (un re-run usaría el commit viejo)
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
 
       - uses: actions/setup-python@v5
         with:
@@ -41,24 +48,28 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Recolectar (CR + LATAM + empleo.cr)
-        id: recolectar
-        env:
-          EMPLEO_MAX_PAGES: ${{ github.event.inputs.empleo_max_pages || '3' }}
-          TELEGRAM_PAGES: "2"
         run: python recolector.py
 
       - name: Commit automático
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/jobs.json
-          if git diff --cached --quiet; then
-            echo "Sin ofertas nuevas"
-            exit 0
-          fi
-          git commit -m "ofertas: ${{ steps.recolectar.outputs.new_count }} nuevas"
           for i in 1 2 3; do
-            git pull --rebase && git push && exit 0
-            sleep 5
+            git add data/jobs.json
+            if git diff --cached --quiet; then
+              echo "Sin ofertas nuevas"
+              exit 0
+            fi
+            n=$(git diff --cached -U0 data/jobs.json | grep -c '^+    "id"' || true)
+            git commit -m "ofertas: $n nuevas"
+            if git push origin "HEAD:$BRANCH"; then
+              exit 0
+            fi
+            # main cambió mientras se recolectaba: en vez de mezclar dos jobs.json
+            # (siempre choca), se baja la versión nueva y se recolecta otra vez
+            echo "main cambió; se recolecta de nuevo sobre la versión actual (intento $i)"
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
+            python recolector.py
           done
           exit 1
