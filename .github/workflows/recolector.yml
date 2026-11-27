@@ -2,7 +2,7 @@ name: Recolector de ofertas
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "3,33 * * * *"
   workflow_dispatch:
     inputs:
       empleo_max_pages:
