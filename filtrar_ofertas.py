@@ -22,7 +22,7 @@ Opciones:
   --refiltrar                      vuelve a clasificar descartadas y en cola (si cambiaste el área)
   --model qwen3:latest
 Variables de entorno: FILTRO_AREA, FILTRO_CRITERIO, FILTRO_LOTE (ofertas por llamada,
-  default 25) + las de Ollama
+  default 20) + las de Ollama
 """
 import argparse
 import os
@@ -38,7 +38,7 @@ from datos import (
 
 FILTRO_AREA = os.getenv("FILTRO_AREA", "Informática y tecnología: desarrollo de software, BI, datos, QA/testing")
 FILTRO_CRITERIO = os.getenv("FILTRO_CRITERIO", "")
-FILTRO_LOTE = int(os.getenv("FILTRO_LOTE", "25"))
+FILTRO_LOTE = int(os.getenv("FILTRO_LOTE", "20"))
 
 FILTER_PROMPT = """Clasifica ofertas de empleo según si pertenecen a esta área profesional:
 
