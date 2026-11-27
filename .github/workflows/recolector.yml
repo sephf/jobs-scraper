@@ -2,8 +2,7 @@ name: Recolector de ofertas
 
 on:
   schedule:
-    # Cada 10 min de 6:00 a 21:59 hora Costa Rica (UTC-6 → 12:00–03:59 UTC)
-    - cron: "*/10 0-3,12-23 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       empleo_max_pages:
