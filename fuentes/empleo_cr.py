@@ -10,11 +10,14 @@ class EmpleoCR(Fuente):
     source = "empleo_cr"
     label = "empleo.cr"
     region = "Costa Rica"
-    description_selectors = [".job-detail-description", ".job-description", ".description-job"]
+    # cabecera (categoría, lugar, salario) + detalles + descripción
+    description_selectors = [".job-detail-header", ".job-detail-detail", ".job-detail-description"]
 
+    # ordenado por más nuevas: así, al llegar a una página ya conocida,
+    # todo lo de atrás también es viejo y se puede parar
     URL = (
-        "https://empleo.cr/job-list/page/{page}/"
-        "?filter-date-posted=30days&filter-salary-from=0&filter-salary-to=1000000"
+        "https://empleo.cr/job-list/?filter-orderby=newest&paged={page}"
+        "&filter-date-posted=30days&filter-salary-from=0&filter-salary-to=1000000"
     )
 
     def __init__(self):

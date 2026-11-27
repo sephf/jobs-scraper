@@ -4,8 +4,8 @@ Recolector de ofertas (corre en GitHub Actions cada 10 min).
 Las páginas viven en fuentes/ (un archivo por página). Este script solo:
   1. corre las fuentes en paralelo (un hilo por fuente),
   2. detecta las ofertas nuevas,
-  3. las agrega a data/jobs.json con processed=false,
-  4. sincroniza "processed" desde data/processed.json (lo escribe el analizador).
+  3. las agrega a data/jobs.json con status="nuevo".
+(filtrar_ofertas.py y analizar_ofertas.py van cambiando ese status)
 
 Uso:
   python recolector.py                     # todas las fuentes
@@ -13,40 +13,22 @@ Uso:
   python recolector.py --list              # ver fuentes disponibles
   python recolector.py --sources empleo --dry-run   # probar sin guardar
 Variables de entorno:
-  MAX_AGE_DAYS  borra ofertas ya procesadas con más de N días (default 60)
+  MAX_AGE_DAYS  borra ofertas descartadas/analizadas con más de N días (default 60)
   MAX_WORKERS   fuentes en paralelo como máximo (default 4)
   (cada fuente puede leer las suyas, ej. EMPLEO_MAX_PAGES, TELEGRAM_PAGES)
 """
 import argparse
-import json
 import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import fuentes
+from datos import ANALIZADO, DESCARTADO, NUEVO, load_jobs, save_jobs
 from fuentes.base import now_iso
 
-BASE = Path(__file__).resolve().parent
-JOBS_FILE = BASE / "data" / "jobs.json"
-PROCESSED_FILE = BASE / "data" / "processed.json"
 EXTRA_FIELDS = ("category", "post_url", "text")
-
-
-def load_json(path: Path, default):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default
-
-
-def save_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def main() -> int:
@@ -74,12 +56,11 @@ def main() -> int:
         if desconocidas:
             sys.exit(f"Fuentes desconocidas: {desconocidas}. Disponibles: {list(disponibles)}")
 
-    jobs: list[dict] = load_json(JOBS_FILE, [])
+    jobs: list[dict] = load_jobs()
     by_id = {j["id"]: j for j in jobs}
     urls_by_source: dict[str, set] = {}
     for j in jobs:
         urls_by_source.setdefault(j["source"], set()).add(j["url"])
-    processed_ids = set(load_json(PROCESSED_FILE, []))
 
     # cada fuente corre en su propio hilo (Playwright incluido: cada una abre
     # su propio navegador dentro de su hilo, nunca se comparte)
@@ -121,23 +102,19 @@ def main() -> int:
             "url": job["url"],
             "date": job.get("date") or stamp,
             "first_seen": stamp,
-            "processed": False,
+            "status": NUEVO,
             **{k: job[k] for k in EXTRA_FIELDS if job.get(k)},
         }
         by_id[job["id"]] = job
         known.add(job["url"])
         new_jobs.append(job)
 
-    # sincronizar processed desde el analizador
-    for job in by_id.values():
-        if job["id"] in processed_ids:
-            job["processed"] = True
-
-    # limpiar viejas ya procesadas
+    # limpiar viejas ya terminadas (las nuevas y en cola nunca se borran)
     max_age = int(os.getenv("MAX_AGE_DAYS", "60"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age)).isoformat()
     kept = [j for j in by_id.values()
-            if not (j["processed"] and j.get("first_seen", stamp) < cutoff)]
+            if not (j.get("status") in (DESCARTADO, ANALIZADO)
+                    and j.get("first_seen", stamp) < cutoff)]
     kept.sort(key=lambda j: (j.get("first_seen", ""), j["id"]))
 
     print(f"\nNuevas: {len(new_jobs)} | Total en JSON: {len(kept)}")
@@ -147,7 +124,12 @@ def main() -> int:
     if args.dry_run:
         print("(dry-run: no se guardó nada)")
     else:
-        save_json(JOBS_FILE, kept)
+        # releer por si filtrar/analizar cambiaron status mientras se recolectaba
+        current = {j["id"]: j.get("status") for j in load_jobs()}
+        for j in kept:
+            if j["id"] in current and current[j["id"]]:
+                j["status"] = current[j["id"]]
+        save_jobs(kept)
 
     gh_out = os.getenv("GITHUB_OUTPUT")
     if gh_out:
