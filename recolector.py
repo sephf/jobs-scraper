@@ -4,8 +4,9 @@ Recolector de ofertas (corre en GitHub Actions cada 10 min).
 Las páginas viven en fuentes/ (un archivo por página). Este script solo:
   1. corre las fuentes en paralelo (un hilo por fuente),
   2. detecta las ofertas nuevas,
-  3. las agrega a data/jobs.json con status="nuevo".
-(filtrar_ofertas.py y analizar_ofertas.py van cambiando ese status)
+  3. las agrega a data/jobs.json.
+jobs.json es solo el historial: el status de cada oferta vive en resultados/estado.json
+(local). Si el recolector corre en GitHub Actions, no lo corras también en tu PC.
 
 Uso:
   python recolector.py                     # todas las fuentes
@@ -13,7 +14,7 @@ Uso:
   python recolector.py --list              # ver fuentes disponibles
   python recolector.py --sources empleo --dry-run   # probar sin guardar
 Variables de entorno:
-  MAX_AGE_DAYS  borra ofertas descartadas/analizadas con más de N días (default 60)
+  MAX_AGE_DAYS  borra del historial las ofertas con más de N días (default 60)
   MAX_WORKERS   fuentes en paralelo como máximo (default 4)
   (cada fuente puede leer las suyas, ej. EMPLEO_MAX_PAGES, TELEGRAM_PAGES)
 """
@@ -25,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 import fuentes
-from datos import ANALIZADO, DESCARTADO, NUEVO, load_jobs, save_jobs
+from datos import JOBS_FILE, LEGACY_FIELDS, load_jobs, save_json
 from fuentes.base import now_iso
 
 EXTRA_FIELDS = ("category", "post_url", "text")
@@ -102,19 +103,22 @@ def main() -> int:
             "url": job["url"],
             "date": job.get("date") or stamp,
             "first_seen": stamp,
-            "status": NUEVO,
             **{k: job[k] for k in EXTRA_FIELDS if job.get(k)},
         }
         by_id[job["id"]] = job
         known.add(job["url"])
         new_jobs.append(job)
 
-    # limpiar viejas ya terminadas (las nuevas y en cola nunca se borran)
+    # limpiar del historial lo más viejo que MAX_AGE_DAYS. Es seguro: empleo.cr solo
+    # muestra 30 días y de Telegram solo se leen los mensajes recientes, así que una
+    # oferta borrada no vuelve a entrar como nueva.
     max_age = int(os.getenv("MAX_AGE_DAYS", "60"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age)).isoformat()
     kept = [j for j in by_id.values()
-            if not (j.get("status") in (DESCARTADO, ANALIZADO)
-                    and j.get("first_seen", stamp) < cutoff)]
+            if j.get("first_seen", stamp) >= cutoff]
+    for j in kept:  # quitar campos de versiones anteriores
+        for k in LEGACY_FIELDS:
+            j.pop(k, None)
     kept.sort(key=lambda j: (j.get("first_seen", ""), j["id"]))
 
     print(f"\nNuevas: {len(new_jobs)} | Total en JSON: {len(kept)}")
@@ -124,12 +128,7 @@ def main() -> int:
     if args.dry_run:
         print("(dry-run: no se guardó nada)")
     else:
-        # releer por si filtrar/analizar cambiaron status mientras se recolectaba
-        current = {j["id"]: j.get("status") for j in load_jobs()}
-        for j in kept:
-            if j["id"] in current and current[j["id"]]:
-                j["status"] = current[j["id"]]
-        save_jobs(kept)
+        save_json(JOBS_FILE, kept)
 
     gh_out = os.getenv("GITHUB_OUTPUT")
     if gh_out:

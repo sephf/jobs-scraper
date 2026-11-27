@@ -3,10 +3,11 @@ Paso 1: filtro por área (rápido).
 
   python filtrar_ofertas.py
 
-Toma las ofertas con status "nuevo" de data/jobs.json y Ollama las clasifica por
-ÁREA usando solo título / categoría / inicio del mensaje, en lotes (sin CV).
+Toma las ofertas nuevas de data/jobs.json (las que no están en resultados/estado.json)
+y Ollama las clasifica por ÁREA usando solo título / categoría / inicio del mensaje,
+en lotes (sin CV). data/jobs.json NO se modifica.
 
-  - en jobs.json:   nuevo -> en_cola  o  nuevo -> descartado
+  - en estado.json: nuevo -> en_cola  o  nuevo -> descartado
   - SOBRESCRIBE resultados/analisis.json con:
       "ofertas":     las del área (las nuevas + las que seguían en cola), pendientes
       "descartadas": las descartadas en esta corrida
@@ -32,7 +33,7 @@ from datetime import datetime
 from analizar_ofertas import DEFAULT_MODEL, _as_bool, check_ollama, ollama_json, source_label
 from datos import (
     ANALYSIS_FILE, DESCARTADO, EN_COLA, NUEVO,
-    load_jobs, save_json, save_jobs, set_status,
+    load_jobs, load_state, save_json, set_status, status_of,
 )
 
 FILTRO_AREA = os.getenv("FILTRO_AREA", "Informática y tecnología: desarrollo de software, BI, datos, QA/testing")
@@ -125,7 +126,8 @@ def entry(job: dict) -> dict:
 
 def write_analysis(cfg: dict, jobs: list[dict], dropped: list[dict]) -> int:
     """Sobrescribe analisis.json con todo lo que está en cola + lo descartado ahora."""
-    cola = [j for j in jobs if j.get("status") == EN_COLA]
+    state = load_state()
+    cola = [j for j in jobs if status_of(state, j["id"]) == EN_COLA]
     cola.sort(key=lambda j: (j.get("first_seen", ""), j.get("date") or ""), reverse=True)
     save_json(ANALYSIS_FILE, {
         "area": cfg["area"],
@@ -154,16 +156,14 @@ def main() -> None:
         sys.exit("Falta el área: define FILTRO_AREA o usa --area")
 
     jobs = load_jobs()
+    state = load_state()
     if args.refiltrar:
-        n = 0
-        for j in jobs:
-            if j.get("status") in (DESCARTADO, EN_COLA):
-                j["status"] = NUEVO
-                n += 1
-        save_jobs(jobs)
-        print(f"Re-clasificando {n} ofertas (descartadas y en cola).")
+        again = {i: NUEVO for i, e in state.items() if e.get("status") in (DESCARTADO, EN_COLA)}
+        set_status(again)
+        state = load_state()
+        print(f"Re-clasificando {len(again)} ofertas (descartadas y en cola).")
 
-    pending = [j for j in jobs if j.get("status") == NUEVO]
+    pending = [j for j in jobs if status_of(state, j["id"]) == NUEVO]
     if not pending:
         print("No hay ofertas nuevas para filtrar (analisis.json no se tocó).")
         return
@@ -197,7 +197,7 @@ def main() -> None:
 
     if not (kept or dropped):
         return
-    en_cola = write_analysis(cfg, load_jobs(), dropped)
+    en_cola = write_analysis(cfg, jobs, dropped)
 
     print(f"\n{len(kept) + len(dropped)} filtradas en {time.time() - t_start:.0f}s: "
           f"{len(kept)} pasan, {len(dropped)} descartadas")

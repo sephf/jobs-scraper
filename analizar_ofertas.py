@@ -9,7 +9,8 @@ Paso 2: análisis con el CV (lento). Antes corre filtrar_ofertas.py.
 3. Abre cada enlace y extrae la descripción.
 4. Consulta Ollama con el CV.
 5. Escribe en analisis.json score, apply, motivo... (ordenado por score) y en
-   data/jobs.json status "analizado" + score + apply (historial).
+   resultados/estado.json status "analizado" + score + apply (historial local).
+   data/jobs.json NO se modifica.
 
 Se puede cortar con Ctrl+C y seguir otro día: lo analizado queda guardado.
 
@@ -360,7 +361,6 @@ def main() -> None:
     if not isinstance(data, dict) or "ofertas" not in data:
         sys.exit("resultados/analisis.json no existe o es del formato anterior.\n"
                  "Corre primero: python filtrar_ofertas.py")
-    load_jobs()  # migra jobs.json si todavía es del formato anterior
 
     if args.ranking:
         done = [o for o in data["ofertas"] if o.get("status") == ANALIZADO]
